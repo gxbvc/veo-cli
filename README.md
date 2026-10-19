@@ -1,6 +1,6 @@
 # veo-cli
 
-CLI for generating videos with Google's Veo 3.1 model. Supports text-to-video, image-to-video, frame interpolation, reference images, and video extension.
+CLI for generating videos with Google's Gemini Omni Flash model (`gemini-omni-1.1-flash`). Supports text-to-video, image-to-video, frame interpolation, reference images, and video extension.
 
 ## Prerequisites
 
@@ -40,7 +40,7 @@ veo-cli generate "A sunset" --negative "cartoon, drawing, low quality"
 veo-cli generate "The cat wakes up and stretches" --image sleeping-cat.png
 ```
 
-### Frame interpolation (Veo 3.1 only)
+### Frame interpolation
 
 Provide both a starting and ending frame — the model fills in the motion between them:
 
@@ -48,7 +48,7 @@ Provide both a starting and ending frame — the model fills in the motion betwe
 veo-cli generate "The car drives off a cliff" --image start.png --last-frame end.png
 ```
 
-### Reference images (Veo 3.1 only)
+### Reference images
 
 Provide up to 3 reference images to preserve a subject's appearance:
 
@@ -56,9 +56,9 @@ Provide up to 3 reference images to preserve a subject's appearance:
 veo-cli generate "Woman walks on the beach" --ref dress.png --ref woman.png --ref glasses.png
 ```
 
-### Video extension (Veo 3.1 only)
+### Video extension
 
-Extend a previously Veo-generated video by ~7 seconds:
+Extend a video with a 3–10 second continuation:
 
 ```bash
 veo-cli extend "The butterfly lands on a flower" --video butterfly.mp4
@@ -68,11 +68,9 @@ veo-cli extend "The butterfly lands on a flower" --video butterfly.mp4
 
 | Model | Description | Audio | Resolutions |
 |-------|-------------|-------|-------------|
-| `veo-3.1-generate-preview` | Latest, highest quality (default) | ✔️ | 720p, 1080p, 4k |
-| `veo-3.1-fast-generate-preview` | Fast variant | ✔️ | 720p, 1080p, 4k |
-| `veo-3` | Stable | ✔️ | 720p, 1080p |
-| `veo-3-fast` | Fast stable | ✔️ | 720p, 1080p |
-| `veo-2` | Legacy, silent | ❌ | 720p |
+| `gemini-omni-1.1-flash` | Fast video generation, editing, keyframe interpolation, extension with native audio (default) | ✔️ | 360p, 720p, 1080p, 4k |
+| `veo-3.1-generate-preview` | Deprecated, shut down Oct 22, 2026 | ✔️ | 720p, 1080p, 4k |
+| `veo-3.1-fast-generate-preview` | Deprecated, shut down Oct 22, 2026 | ✔️ | 720p, 1080p, 4k |
 
 ## Options
 
@@ -83,25 +81,25 @@ veo-cli extend "The butterfly lands on a flower" --video butterfly.mp4
 | `--last-frame <path>` | Ending frame (interpolation) | — |
 | `--ref <path>` | Reference image (repeatable, max 3) | — |
 | `--aspect <ratio>` | `16:9` or `9:16` | `16:9` |
-| `--resolution <res>` | `720p`, `1080p`, `4k` | `720p` |
-| `--duration <seconds>` | `4`, `6`, or `8` | Model default |
-| `--negative <text>` | Negative prompt | — |
-| `--seed <number>` | Seed value | — |
-| `--person <mode>` | `allow_all`, `allow_adult`, `dont_allow` | Model default |
-| `--model <id>` | Model identifier | `veo-3.1-generate-preview` |
+| `--resolution <res>` | `360p`, `720p`, `1080p`, `4k` | `720p` |
+| `--duration <seconds>` | Not supported by `gemini-omni-1.1-flash`; ignored | — |
+| `--negative <text>` | Things to avoid (appended to the prompt) | — |
+| `--seed <number>` | Not supported by `gemini-omni-1.1-flash`; ignored | — |
+| `--person <mode>` | Not supported by `gemini-omni-1.1-flash`; ignored | Model default |
+| `--model <id>` | Model identifier | `gemini-omni-1.1-flash` |
 
 ## Output
 
 JSON to stdout:
 
 ```json
-{"ok": true, "data": {"file": "output.mp4", "model": "veo-3.1-generate-preview", "aspect_ratio": "16:9", "resolution": "720p", "duration": "8", "elapsed": "1m2s"}}
+{"ok": true, "data": {"file": "output.mp4", "model": "gemini-omni-1.1-flash", "aspect_ratio": "16:9", "resolution": "720p", "duration": "8", "elapsed": "1m2s"}}
 ```
 
 Progress messages go to stderr.
 
 ## How it works
 
-Uses the `@google/genai` SDK's `generateVideos` method, which is an asynchronous long-running operation. The CLI polls every 10 seconds until the video is ready, then downloads it to disk. Generation typically takes 11 seconds to 6 minutes.
+Uses the `@google/genai` SDK's `interactions.create` method with `response_format: { type: "video" }`. The call blocks until the video is ready, then the base64 video data is written straight to disk. Generation time depends on duration, resolution, and API load.
 
-All videos include a SynthID watermark. Generated videos are stored on Google's servers for 2 days before being deleted.
+Videos include a SynthID watermark.

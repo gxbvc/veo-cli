@@ -26,12 +26,20 @@ function formatElapsed(ms: number): string {
   return `${mins}m${remainSecs}s`;
 }
 
+function extractVideoBase64(interaction: any): string | undefined {
+  if (interaction?.output_video?.data) return interaction.output_video.data;
+  for (const output of interaction?.outputs || []) {
+    if (output?.type === "video" && output?.data) return output.data;
+  }
+  return undefined;
+}
+
 export async function extendCommand(prompt: string, opts: any) {
   try {
     const apiKey = getApiKey();
     const ai = new GoogleGenAI({ apiKey });
 
-    const model = opts.model || "veo-3.1-generate-preview";
+    const model = opts.model || "gemini-omni-1.1-flash";
 
     if (!opts.video) {
       throw new Error("--video is required for extend command");
@@ -41,47 +49,46 @@ export async function extendCommand(prompt: string, opts: any) {
       throw new Error(`Video file not found: ${opts.video}`);
     }
 
-    const videoBytes = fs.readFileSync(opts.video).toString("base64");
-
-    const request: any = {
-      model,
-      prompt,
-      video: {
-        videoBytes,
-        mimeType: "video/mp4",
-      },
-      config: {
-        numberOfVideos: 1,
-        resolution: "720p",
-      },
-    };
-
-    console.error(`Extending video with ${model}...`);
+    console.error(`Uploading video for extension with ${model}...`);
     const startTime = Date.now();
 
-    let operation = await ai.models.generateVideos(request);
+    // Upload the video with the Files API, then reference it by URI.
+    let videoFile: any = await ai.files.upload({
+      file: opts.video,
+      config: { mimeType: "video/mp4" },
+    });
 
-    while (!operation.done) {
+    while (videoFile.state === "PROCESSING") {
       const elapsed = formatElapsed(Date.now() - startTime);
-      console.error(`Waiting for video extension... ${elapsed} elapsed`);
-      await new Promise((resolve) => setTimeout(resolve, 10000));
-      operation = await ai.operations.getVideosOperation({ operation });
+      console.error(`Waiting for upload to process... ${elapsed} elapsed`);
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      videoFile = await ai.files.get({ name: videoFile.name });
     }
+
+    if (videoFile.state === "FAILED") {
+      throw new Error("Video upload failed to process");
+    }
+
+    console.error(`Extending video with ${model}...`);
+
+    const interaction: any = await ai.interactions.create({
+      model,
+      input: [
+        { type: "video", uri: videoFile.uri },
+        { type: "text", text: prompt },
+      ],
+    });
 
     const elapsed = formatElapsed(Date.now() - startTime);
     console.error(`Video extended in ${elapsed}`);
 
-    const outputPath = opts.output || generateFilename(prompt);
-
-    const generatedVideo = operation.response?.generatedVideos?.[0];
-    if (!generatedVideo?.video) {
+    const videoData = extractVideoBase64(interaction);
+    if (!videoData) {
       throw new Error("No video in response");
     }
 
-    await ai.files.download({
-      file: generatedVideo.video,
-      downloadPath: outputPath,
-    });
+    const outputPath = opts.output || generateFilename(prompt);
+    fs.writeFileSync(outputPath, Buffer.from(videoData, "base64"));
 
     console.error(`Saved to ${outputPath}`);
 

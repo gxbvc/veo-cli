@@ -43,103 +43,100 @@ function formatElapsed(ms: number): string {
   return `${mins}m${remainSecs}s`;
 }
 
+function imageContent(filePath: string) {
+  return {
+    type: "image" as const,
+    data: readImageAsBase64(filePath),
+    mime_type: getMimeType(filePath),
+  };
+}
+
+function extractVideoBase64(interaction: any): string | undefined {
+  if (interaction?.output_video?.data) return interaction.output_video.data;
+  for (const output of interaction?.outputs || []) {
+    if (output?.type === "video" && output?.data) return output.data;
+  }
+  return undefined;
+}
+
 export async function generateCommand(prompt: string, opts: any) {
   try {
     const apiKey = getApiKey();
     const ai = new GoogleGenAI({ apiKey });
 
-    const model = opts.model || "veo-3.1-generate-preview";
+    const model = opts.model || "gemini-omni-1.1-flash";
 
-    // Build request
-    const request: any = {
-      model,
-      prompt,
-    };
+    if (opts.duration) {
+      console.error(`Note: --duration is not supported by ${model}; ignoring.`);
+    }
+    if (opts.seed !== undefined) {
+      console.error(`Note: --seed is not supported by ${model}; ignoring.`);
+    }
+    if (opts.person) {
+      console.error(`Note: --person is not supported by ${model}; ignoring.`);
+    }
 
-    // Image input (starting frame)
+    // Negative prompts are not a separate parameter on this model; the docs
+    // say to put negatives in the regular prompt.
+    let fullPrompt = prompt;
+    if (opts.negative) {
+      fullPrompt = `${prompt}. Do not include: ${opts.negative}`;
+    }
+
+    // Build input
+    const input: any[] = [];
     if (opts.image) {
       if (!fs.existsSync(opts.image)) {
         throw new Error(`Image file not found: ${opts.image}`);
       }
-      request.image = {
-        imageBytes: readImageAsBase64(opts.image),
-        mimeType: getMimeType(opts.image),
-      };
+      input.push(imageContent(opts.image));
     }
-
-    // Config options
-    const config: any = {};
-
-    if (opts.aspect) config.aspectRatio = opts.aspect;
-    if (opts.resolution) config.resolution = opts.resolution;
-    if (opts.duration) config.durationSeconds = parseInt(opts.duration, 10);
-    if (opts.negative) config.negativePrompt = opts.negative;
-    if (opts.seed !== undefined) config.seed = parseInt(opts.seed, 10);
-    if (opts.person) config.personGeneration = opts.person;
-
-    // Last frame (interpolation)
     if (opts.lastFrame) {
       if (!fs.existsSync(opts.lastFrame)) {
         throw new Error(`Last frame image not found: ${opts.lastFrame}`);
       }
-      config.lastFrame = {
-        imageBytes: readImageAsBase64(opts.lastFrame),
-        mimeType: getMimeType(opts.lastFrame),
-      };
+      input.push(imageContent(opts.lastFrame));
     }
-
-    // Reference images
     if (opts.ref && opts.ref.length > 0) {
       if (opts.ref.length > 3) {
         throw new Error("Maximum 3 reference images allowed");
       }
-      config.referenceImages = opts.ref.map((refPath: string) => {
+      for (const refPath of opts.ref) {
         if (!fs.existsSync(refPath)) {
           throw new Error(`Reference image not found: ${refPath}`);
         }
-        return {
-          image: {
-            imageBytes: readImageAsBase64(refPath),
-            mimeType: getMimeType(refPath),
-          },
-          referenceType: "asset",
-        };
-      });
+        input.push(imageContent(refPath));
+      }
+    }
+    if (input.length > 0) {
+      input.push({ type: "text", text: fullPrompt });
     }
 
-    if (Object.keys(config).length > 0) {
-      request.config = config;
-    }
+    // Config options
+    const responseFormat: any = { type: "video" };
+    if (opts.aspect) responseFormat.aspect_ratio = opts.aspect;
+    if (opts.resolution) responseFormat.resolution = opts.resolution;
 
     // Start generation
     console.error(`Generating video with ${model}...`);
     const startTime = Date.now();
 
-    let operation = await ai.models.generateVideos(request);
-
-    // Poll until done
-    while (!operation.done) {
-      const elapsed = formatElapsed(Date.now() - startTime);
-      console.error(`Waiting for video generation... ${elapsed} elapsed`);
-      await new Promise((resolve) => setTimeout(resolve, 10000));
-      operation = await ai.operations.getVideosOperation({ operation });
-    }
+    const interaction: any = await ai.interactions.create({
+      model,
+      input: input.length > 0 ? input : fullPrompt,
+      response_format: responseFormat,
+    });
 
     const elapsed = formatElapsed(Date.now() - startTime);
     console.error(`Video generated in ${elapsed}`);
 
-    // Download the video
-    const outputPath = opts.output || generateFilename(prompt);
-
-    const generatedVideo = operation.response?.generatedVideos?.[0];
-    if (!generatedVideo?.video) {
+    const videoData = extractVideoBase64(interaction);
+    if (!videoData) {
       throw new Error("No video in response");
     }
 
-    await ai.files.download({
-      file: generatedVideo.video,
-      downloadPath: outputPath,
-    });
+    const outputPath = opts.output || generateFilename(prompt);
+    fs.writeFileSync(outputPath, Buffer.from(videoData, "base64"));
 
     console.error(`Saved to ${outputPath}`);
 
